@@ -34,6 +34,7 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <inttypes.h>
 
 #ifdef __linux__
 #include <linux/fs.h> // For IOCTLs
@@ -75,7 +76,7 @@ int add_data_to_map(struct dpme *data, long index, partition_map_header *map);
 void coerce_block0(partition_map_header *map);
 int contains_driver(partition_map *entry);
 void combine_entry(partition_map *entry);
-long compute_device_size(int fd);
+uint64_t compute_device_size(int fd);
 DPME* create_data(const char *name, const char *dptype, uint32_t base, uint32_t length);
 partition_map_header* create_partition_map(char *name);
 void delete_entry(partition_map *entry);
@@ -124,9 +125,19 @@ open_partition_map(char *name, int *valid_file)
     map->changed = 0;
     map->disk_order = NULL;
     map->base_order = NULL;
+    map->misc = NULL;
     map->blocks_in_map = 0;
     map->maximum_in_map = -1;
-    map->media_size = compute_device_size(fd);
+    {
+	uint64_t media_size = compute_device_size(fd);
+	if (media_size > UINT32_MAX) {
+	    error(0, "device is too large for the Apple Partition Map format");
+	    close_device(fd);
+	    free(map);
+	    return NULL;
+	}
+	map->media_size = (uint32_t)media_size;
+    }
 
     if (fstat(fd, &info) < 0) {
 	error(errno, "can't stat file '%s'", name);
@@ -135,18 +146,23 @@ open_partition_map(char *name, int *valid_file)
 	map->regular_file = S_ISREG(info.st_mode);
     }
 
-    map->misc = (Block0 *) malloc(PBLOCK_SIZE);
+    map->misc = (Block0 *) calloc(1, sizeof(*map->misc));
     if (map->misc == NULL) {
 	error(errno, "can't allocate memory for block zero buffer");
-    } else if (read_block(fd, 0, (char *)map->misc, 0) == 0
-	    || convert_block0(map->misc, 1)) {
-	// if I can't read block 0 I might as well give up
-    } else if (read_partition_map(map) < 0) {
-	// some sort of failure reading the map
     } else {
+	uint8_t block[BLOCK0_WIRE_SIZE];
+	if (read_block(fd, 0, (char *)block, 0) == 0) {
+	// if I can't read block 0 I might as well give up
+	} else {
+	    decode_block0(map->misc, block);
+	    if (read_partition_map(map) < 0) {
+	// some sort of failure reading the map
+	    } else {
 	// got it!
-	coerce_block0(map);
-	return map;
+		coerce_block0(map);
+		return map;
+	    }
+	}
     }
     close_partition_map(map);
     return NULL;
@@ -180,23 +196,29 @@ read_partition_map(partition_map_header *map)
 {
     DPME *data;
     uint32_t limit;
-    int index;
+    uint32_t index;
+    uint8_t block[DPME_WIRE_SIZE];
 
-    data = (DPME *) malloc(PBLOCK_SIZE);
+    data = (DPME *) malloc(sizeof(*data));
     if (data == NULL) {
 	error(errno, "can't allocate memory for disk buffers");
 	return -1;
     }
 
-    if (read_block(map->fd, 1, (char *)data, 0) == 0) {
+    if (read_block(map->fd, 1, (char *)block, 0) == 0) {
 	free(data);
 	return -1;
-    } else if (convert_dpme(data, 1)
-	    || data->dpme_signature != DPME_SIGNATURE) {
+    }
+    decode_dpme(data, block);
+    if (data->dpme_signature != DPME_SIGNATURE) {
 	free(data);
 	return -1;
     } else {
 	limit = data->dpme_map_entries;
+	if (limit == 0 || limit > map->media_size) {
+	    free(data);
+	    return -1;
+	}
 	index = 1;
 	while (1) {
 	    if (add_data_to_map(data, index, map) == 0) {
@@ -210,17 +232,18 @@ read_partition_map(partition_map_header *map)
 		index++;
 	    }
 
-	    data = (DPME *) malloc(PBLOCK_SIZE);
+	    data = (DPME *) malloc(sizeof(*data));
 	    if (data == NULL) {
 		error(errno, "can't allocate memory for disk buffers");
 		return -1;
 	    }
 
-	    if (read_block(map->fd, index, (char *)data, 0) == 0) {
+	    if (read_block(map->fd, index, (char *)block, 0) == 0) {
 		free(data);
 		return -1;
-	    } else if (convert_dpme(data, 1)
-		    || data->dpme_signature != DPME_SIGNATURE
+	    }
+	    decode_dpme(data, block);
+	    if (data->dpme_signature != DPME_SIGNATURE
 		    || data->dpme_map_entries != limit) {
 		free(data);
 		return -1;
@@ -235,39 +258,29 @@ void
 write_partition_map(partition_map_header *map)
 {
     int fd;
-    char *block;
+    uint8_t block[PBLOCK_SIZE];
     partition_map * entry;
-    int i;
-    int saved_errno;
+    int i = 0;
 
     fd = map->fd;
     if (map->misc != NULL) {
-	convert_block0(map->misc, 0);
-	write_block(fd, 0, (char *)map->misc);
-	convert_block0(map->misc, 1);
+	encode_block0(block, map->misc);
+	write_block(fd, 0, (char *)block);
     } else {
-	block = (char *) calloc(1, PBLOCK_SIZE);
-	if (block != NULL) {
-	    write_block(fd, 0, block);
-	    free(block);
-	}
+	memset(block, 0, sizeof(block));
+	write_block(fd, 0, (char *)block);
     }
     for (entry = map->disk_order; entry != NULL; entry = entry->next_on_disk) {
-	convert_dpme(entry->data, 0);
-	write_block(fd, entry->disk_address, (char *)entry->data);
-	convert_dpme(entry->data, 1);
+	encode_dpme(block, entry->data);
+	write_block(fd, entry->disk_address, (char *)block);
 	i = entry->disk_address;
     }
 	// zap the block after the map (if possible) to get around a bug.
     if (map->maximum_in_map > 0 &&  i < map->maximum_in_map) {
 	i += 1;
-	block = (char *) malloc(PBLOCK_SIZE);
-	if (block != NULL) {
-	    if (read_block(fd, i, block, 1)) {
+	if (read_block(fd, i, (char *)block, 1)) {
 		block[0] = 0;
-		write_block(fd, i, block);
-	    }
-	    free(block);
+		write_block(fd, i, (char *)block);
 	}
     }
     printf("The partition map has been saved successfully!\n\n");
@@ -276,6 +289,7 @@ write_partition_map(partition_map_header *map)
 	close_device(map->fd);
     } else {
 #ifdef BLKFLSBUF
+	int saved_errno;
 	 printf("Calling ioctl() to re-read partition table.\n");
 	if ((i = ioctl(fd, BLKFLSBUF)) != 0) {
 	    perror("ioctl(BLKFLSBUF)");
@@ -388,7 +402,7 @@ create_partition_map(char *name)
     int fd;
     partition_map_header * map;
     DPME *data;
-    unsigned long number;
+    uint64_t number;
     struct stat info;
 
     fd = open_device(name, (rflag)?O_RDONLY:O_RDWR);
@@ -410,18 +424,24 @@ create_partition_map(char *name)
     map->changed = 0;
     map->disk_order = NULL;
     map->base_order = NULL;
+    map->misc = NULL;
     map->blocks_in_map = 0;
     map->maximum_in_map = -1;
 
     number = compute_device_size(fd);
     char prompt[64];
-    sprintf(prompt, "Device block size [%lu]: ", number);
-    get_number_argument(prompt, (long *)&number, number);
-    if (number < 4) {
-	number = 4;
+    sprintf(prompt, "Device block count [%"PRIu64"]: ", number);
+    if (get_number_argument(prompt, &number, number) == 0) {
+	close_partition_map(map);
+	return NULL;
     }
-    printf("new size of 'device' is %lu blocks\n", number);
-    map->media_size = number;
+    if (number < 4 || number > UINT32_MAX) {
+	error(0, "device size is outside the Apple Partition Map address space");
+	close_partition_map(map);
+	return NULL;
+    }
+    printf("new size of 'device' is %"PRIu64" blocks\n", number);
+    map->media_size = (uint32_t)number;
 
     if (fstat(fd, &info) < 0) {
 	error(errno, "can't stat file '%s'", name);
@@ -430,12 +450,12 @@ create_partition_map(char *name)
 	map->regular_file = S_ISREG(info.st_mode);
     }
 
-    map->misc = (Block0 *) malloc(PBLOCK_SIZE);
+    map->misc = (Block0 *) calloc(1, sizeof(*map->misc));
     if (map->misc == NULL) {
 	error(errno, "can't allocate memory for block zero buffer");
     } else {
 	// got it!
-	data = (DPME *) calloc(1, PBLOCK_SIZE);
+	data = (DPME *) calloc(1, sizeof(*data));
 	if (data == NULL) {
 	    error(errno, "can't allocate memory for disk buffers");
 	} else {
@@ -497,18 +517,29 @@ add_partition_to_map(const char *name, const char *dptype, uint32_t base, uint32
     partition_map * cur;
     DPME *data;
     enum add_action act;
-    int limit;
+    uint32_t limit;
     uint32_t adjusted_base;
     uint32_t adjusted_length;
     uint32_t new_base;
     uint32_t new_length;
+    uint64_t end;
+
+    if (length == 0) {
+	printf("partition length must be greater than zero\n");
+	return 0;
+    }
+    end = (uint64_t)base + length;
+    if (end > map->media_size) {
+	printf("requested partition range is outside the device\n");
+	return 0;
+    }
 
 	// find a block that starts includes base and length
     cur = map->base_order;
     while (cur != NULL) {
 	if (cur->data->dpme_pblock_start <= base 
-		&& (base + length) <=
-		    (cur->data->dpme_pblock_start + cur->data->dpme_pblocks)) {
+		&& end <= (uint64_t)cur->data->dpme_pblock_start
+		    + cur->data->dpme_pblocks) {
 	    break;
 	} else {
 	    cur = cur->next_by_base;
@@ -534,7 +565,7 @@ add_partition_to_map(const char *name, const char *dptype, uint32_t base, uint32
 	}
     } else {
 	// split or add
-	if (data->dpme_pblock_start + data->dpme_pblocks == base + length) {
+	if ((uint64_t)data->dpme_pblock_start + data->dpme_pblocks == end) {
 	    act = kAdd;
 	    adjusted_base = data->dpme_pblock_start;
 	    adjusted_length = base - adjusted_base;
@@ -550,9 +581,9 @@ add_partition_to_map(const char *name, const char *dptype, uint32_t base, uint32
     if (map->maximum_in_map < 0) {
 	limit = map->media_size;
     } else {
-	limit = map->maximum_in_map;
+	limit = (uint32_t)map->maximum_in_map;
     }
-    if (map->blocks_in_map + act > limit) {
+    if ((uint32_t)map->blocks_in_map + (uint32_t)act > limit) {
 	printf("the map is not big enough\n");
 	return 0;
     }
@@ -591,15 +622,15 @@ add_partition_to_map(const char *name, const char *dptype, uint32_t base, uint32
 	// Assume 68k drivers for now
 	strncpy(cur->data->dpme_process_id, "68000\0", 6);
 
-	Block0* bz = map->misc;
-	if (bz->sbDrvrCount < sizeof(bz->sbMap) / sizeof(DDMap))
-	{
-		DDMap* ddmap = &((DDMap*)bz->sbMap)[bz->sbDrvrCount];
-		ddmap->ddBlock = base;
-		ddmap->ddSize = length;
-		ddmap->ddType = 1; // System type, 1 for Mac+
-		bz->sbDrvrCount++;
-	}
+    Block0* bz = map->misc;
+    if (bz != NULL && bz->sbDrvrCount < BLOCK0_MAX_DRIVERS)
+    {
+		DDMap ddmap = { base, (uint16_t)length, 1 };
+		if (length <= UINT16_MAX
+			&& block0_set_driver(bz, bz->sbDrvrCount, &ddmap) == 0) {
+			bz->sbDrvrCount++;
+		}
+    }
     }
 
     // mark changed
@@ -654,48 +685,39 @@ renumber_disk_addresses(partition_map_header *map)
 }
 
 
-long
+uint64_t
 compute_device_size(int fd)
 {
     char* data;
-    unsigned long l, r, x;
-    int valid;
+    uint64_t l, r, x;
 
     data = (char *) malloc(PBLOCK_SIZE);
     if (data == NULL) {
 	error(errno, "can't allocate memory for try buffer");
 	x = 0;
+    } else if (read_block(fd, 0, data, 1) == 0) {
+	x = 0;
     } else {
-	// double till off end
+	/* Find the first unreadable block, probing one past the APM limit. */
 	l = 0;
 	r = 1024;
 	while (read_block(fd, r, data, 1) != 0) {
 	    l = r;
-	    if (r <= 1024) {
-		r = r * 1024;
+	    if (r >= UINT32_MAX) {
+		free(data);
+		return UINT64_C(1) + UINT32_MAX;
+	    }
+	    r = r > UINT32_MAX / 2 ? UINT32_MAX : r * 2;
+	}
+	while (l + 1 < r) {
+	    x = l + (r - l) / 2;
+	    if (read_block(fd, x, data, 1) != 0) {
+		l = x;
 	    } else {
-		r = r * 2;
-	    }
-	    if (r >= (1024*1024*1024)) {
-		break;
+		r = x;
 	    }
 	}
-	// binary search for end
-	while (l <= r) {
-	    x = (l + r) / 2;
-	    if ((valid = read_block(fd, x, data, 1)) != 0) {
-		l = x + 1;
-	    } else {
-		if (x > 0) {
-		    r = x - 1;
-		} else {
-		    break;
-		}
-	    }
-	}
-	if (valid != 0) {
-	    x = x + 1;
-	}
+	x = r;
 	free(data);
     }
 
@@ -718,16 +740,17 @@ delete_partition_from_map(partition_map *entry)
     {
 	Block0* bz = entry->the_map->misc;
 	int i;
-	for (i = 0; i < bz->sbDrvrCount; ++i)
+	DDMap ddmap;
+	for (i = 0; bz != NULL && i < bz->sbDrvrCount; ++i)
 	{
-	    DDMap* ddmap = &((DDMap*)bz->sbMap)[i];
-	    if (ddmap->ddBlock == entry->data->dpme_pblock_start)
+	    if (block0_get_driver(bz, i, &ddmap) == 0
+		    && ddmap.ddBlock == entry->data->dpme_pblock_start)
 	    {
 		// Found a driver!
 		memmove(
-		    &((DDMap*)bz->sbMap)[i],
-		    &((DDMap*)bz->sbMap)[i + 1],
-		    (bz->sbDrvrCount - i - 1) * sizeof(DDMap));
+		    bz->sbMap + ((size_t)i * 8),
+		    bz->sbMap + ((size_t)(i + 1) * 8),
+		    (size_t)(bz->sbDrvrCount - i - 1) * 8);
 		bz->sbDrvrCount--;
 		break;
 	    }
@@ -753,7 +776,7 @@ contains_driver(partition_map *entry)
 {
     partition_map_header *map;
     Block0 *p;
-    DDMap *m;
+    DDMap driver;
     int i;
 
     map = entry->the_map;
@@ -765,12 +788,12 @@ contains_driver(partition_map *entry)
 	return 0;
     }
     if (p->sbDrvrCount > 0) {
-	m = (DDMap *) p->sbMap;
 	for (i = 0; i < p->sbDrvrCount; i++) {
-	    if (entry->data->dpme_pblock_start <= m[i].ddBlock
-		    && (m[i].ddBlock + m[i].ddSize)
-			<= (entry->data->dpme_pblock_start
-			+ entry->data->dpme_pblocks)) {
+	    if (block0_get_driver(p, i, &driver) == 0
+		    && entry->data->dpme_pblock_start <= driver.ddBlock
+		    && (uint64_t)driver.ddBlock + driver.ddSize
+			<= (uint64_t)entry->data->dpme_pblock_start
+			+ entry->data->dpme_pblocks) {
 		return 1;
 	    }
 	}
@@ -792,8 +815,8 @@ combine_entry(partition_map *entry)
 	p = entry->next_by_base;
 	if (strncmp(p->data->dpme_type, kFreeType, DPISTRLEN) != 0) {
 	    // next is not free
-	} else if (entry->data->dpme_pblock_start + entry->data->dpme_pblocks
-		!= p->data->dpme_pblock_start) {
+	} else if ((uint64_t)entry->data->dpme_pblock_start
+		+ entry->data->dpme_pblocks != p->data->dpme_pblock_start) {
 	    // next is not contiguous (XXX this is bad)
 	} else {
 	    entry->data->dpme_pblocks += p->data->dpme_pblocks;
@@ -805,8 +828,8 @@ combine_entry(partition_map *entry)
 	p = entry->prev_by_base;
 	if (strncmp(p->data->dpme_type, kFreeType, DPISTRLEN) != 0) {
 	    // previous is not free
-	} else if (p->data->dpme_pblock_start + p->data->dpme_pblocks
-		!= entry->data->dpme_pblock_start) {
+	} else if ((uint64_t)p->data->dpme_pblock_start
+		+ p->data->dpme_pblocks != entry->data->dpme_pblock_start) {
 	    // previous is not contiguous (XXX this is bad)
 	} else {
 	    entry->data->dpme_pblock_start = p->data->dpme_pblock_start;
@@ -973,7 +996,7 @@ insert_in_base_order(partition_map *entry)
 
 
 void
-resize_map(long new_size, partition_map_header *map)
+resize_map(uint32_t new_size, partition_map_header *map)
 {
     partition_map * entry;
     partition_map * next;
@@ -1007,7 +1030,7 @@ resize_map(long new_size, partition_map_header *map)
 	} else {
 	    incr = 0;
 	}
-	if (new_size < map->blocks_in_map + incr) {
+	if ((uint64_t)new_size < (uint64_t)map->blocks_in_map + incr) {
 	    printf("New size would be too small\n");
 	    return;
 	}
@@ -1023,7 +1046,7 @@ resize_map(long new_size, partition_map_header *map)
 	printf("No free space to expand into\n");
 	return;
     }
-    if (entry->data->dpme_pblock_start + entry->data->dpme_pblocks
+    if ((uint64_t)entry->data->dpme_pblock_start + entry->data->dpme_pblocks
 	    != next->data->dpme_pblock_start) {
 	printf("No contiguous free space to expand into\n");
 	return;
@@ -1062,7 +1085,8 @@ find_entry_by_sector(uint32_t lba, partition_map_header *map)
     partition_map* cur = map->base_order;
     while (cur != NULL) {
 	if ((cur->data->dpme_pblock_start <= lba) &&
-	    (lba < cur->data->dpme_pblock_start + cur->data->dpme_pblocks)) {
+	    ((uint64_t)lba < (uint64_t)cur->data->dpme_pblock_start
+		+ cur->data->dpme_pblocks)) {
 	    break;
 	} else {
 	    cur = cur->next_by_base;
@@ -1070,4 +1094,3 @@ find_entry_by_sector(uint32_t lba, partition_map_header *map)
     }
     return cur;
 }
-

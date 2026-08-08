@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <limits.h>
 
 #include <sys/ioctl.h>
 
@@ -103,8 +104,8 @@ int do_expert(partition_map_header *map);
 void do_reorder(partition_map_header *map);
 void do_write_partition_map(partition_map_header *map);
 void edit(char *name);
-int get_base_argument(long *number, partition_map_header *map);
-int get_size_argument(uint32_t base, long *number, partition_map_header *map);
+int get_base_argument(uint64_t *number, partition_map_header *map);
+int get_size_argument(uint64_t base, uint64_t *number, partition_map_header *map);
 int get_options(int argc, char **argv);
 void print_notes();
 
@@ -117,17 +118,6 @@ main(int argc, char **argv)
 {
     int name_index;
     int err=0;
-
-    if (sizeof(DPME) != PBLOCK_SIZE) {
-	fatal(-1, "Size of partion map entry (%d) "
-		"is not equal to block size (%d)\n",
-		sizeof(DPME), PBLOCK_SIZE);
-    }
-    if (sizeof(Block0) != PBLOCK_SIZE) {
-	fatal(-1, "Size of block zero structure (%d) "
-		"is not equal to block size (%d)\n",
-		sizeof(Block0), PBLOCK_SIZE);
-    }
 
     name_index = get_options(argc, argv);
 
@@ -340,8 +330,8 @@ finis:
 void
 do_create_partition(partition_map_header *map, int get_type)
 {
-    long base;
-    long length;
+    uint64_t base;
+    uint64_t length;
     char *name = NULL;
     char *type_name = NULL;
 
@@ -357,6 +347,11 @@ do_create_partition(partition_map_header *map, int get_type)
 	return;
     }
     if (get_size_argument(base, &length, map) == 0) {
+	return;
+    }
+    if (base > UINT32_MAX || length == 0 || length > UINT32_MAX
+	    || base + length > map->media_size) {
+	bad_input("Partition range is outside the Apple Partition Map address space");
 	return;
     }
 
@@ -397,7 +392,7 @@ do_create_partition(partition_map_header *map, int get_type)
 void
 do_create_bootstrap_partition(partition_map_header *map)
 {
-    long base;
+    uint64_t base;
 
     if (map == NULL) {
 	bad_input("No partition map exists");
@@ -412,14 +407,18 @@ do_create_bootstrap_partition(partition_map_header *map)
     if (get_base_argument(&base, map) == 0) {
 	return;
     }
+    if (base > UINT32_MAX || base + 1600 > map->media_size) {
+	bad_input("Bootstrap partition is outside the Apple Partition Map address space");
+	return;
+    }
 
     // create 800K type Apple_Bootstrap partition named `bootstrap'
-    add_partition_to_map(kBootstrapName, kBootstrapType, base, 1600, map);
+    add_partition_to_map(kBootstrapName, kBootstrapType, (uint32_t)base, 1600, map);
 }
 
 
 int
-get_base_argument(long *number, partition_map_header *map)
+get_base_argument(uint64_t *number, partition_map_header *map)
 {
     int result = 0;
 
@@ -436,26 +435,26 @@ get_base_argument(long *number, partition_map_header *map)
 
 
 int
-get_size_argument(uint32_t base, long *number, partition_map_header *map)
+get_size_argument(uint64_t base, uint64_t *number, partition_map_header *map)
 {
     int result = 0;
 
-    uint32_t defaultSize = 20480; // 10MB
+    uint64_t defaultSize = 20480; // 10MB
 
     // Work out how much free-space is available.
-    partition_map* part = find_entry_by_sector(base, map);
+    partition_map* part = base <= UINT32_MAX
+	? find_entry_by_sector((uint32_t)base, map) : NULL;
     if (part)
     {
-	size_t partEnd =
-	    part->data->dpme_pblock_start +
-	    part->data->dpme_pblocks;
+	uint64_t partEnd = (uint64_t)part->data->dpme_pblock_start
+	    + part->data->dpme_pblocks;
 	defaultSize = partEnd - base;
     }
 
     char prompt[80];
     sprintf(
 	prompt,
-	"Length (in blocks, kB (k), MB (M) or GB (G)) [%"PRIu32"]: ",
+	"Length (in blocks, kB (k), MB (M) or GB (G)) [%"PRIu64"]: ",
 	defaultSize);
 
     if (get_number_argument(prompt, number, defaultSize) == 0) {
@@ -472,6 +471,7 @@ do_delete_partition(partition_map_header *map)
 {
     partition_map * cur;
     long index;
+    uint64_t input;
 
     if (map == NULL) {
 	bad_input("No partition map exists");
@@ -480,10 +480,12 @@ do_delete_partition(partition_map_header *map)
     if (!rflag && map->writeable == 0) {
 	printf("The map is not writeable.\n");
     }
-    if (get_number_argument("Partition number: ", &index, kDefault) == 0) {
+    if (get_number_argument("Partition number: ", &input, kDefault) == 0
+	    || input > LONG_MAX) {
 	bad_input("Bad partition number");
 	return;
     }
+    index = (long)input;
 
 	// find partition and delete it
     cur = find_entry_by_disk_address(index, map);
@@ -500,6 +502,7 @@ do_reorder(partition_map_header *map)
 {
     long old_index;
     long index;
+    uint64_t input;
 
     if (map == NULL) {
 	bad_input("No partition map exists");
@@ -508,14 +511,18 @@ do_reorder(partition_map_header *map)
     if (!rflag && map->writeable == 0) {
 	printf("The map is not writeable.\n");
     }
-    if (get_number_argument("Partition number: ", &old_index, kDefault) == 0) {
+    if (get_number_argument("Partition number: ", &input, kDefault) == 0
+	    || input > LONG_MAX) {
 	bad_input("Bad partition number");
 	return;
     }
-    if (get_number_argument("New number: ", &index, kDefault) == 0) {
-	bad_input("Bad partition number");
+    old_index = (long)input;
+    if (get_number_argument("New number: ", &input, kDefault) == 0
+	    || input > LONG_MAX) {
+	bad_input("Bad new partition number");
 	return;
     }
+    index = (long)input;
 
     move_entry_in_map(old_index, index, map);
 }
@@ -623,7 +630,7 @@ finis:
 void
 do_change_map_size(partition_map_header *map)
 {
-    long size;
+    uint64_t size;
 
     if (map == NULL) {
 	bad_input("No partition map exists");
@@ -636,7 +643,11 @@ do_change_map_size(partition_map_header *map)
 	bad_input("Bad size");
 	return;
     }
-    resize_map(size, map);
+    if (size > UINT32_MAX) {
+	bad_input("Map size exceeds the Apple Partition Map address space");
+	return;
+    }
+    resize_map((uint32_t)size, map);
 }
 
 

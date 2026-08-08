@@ -33,6 +33,9 @@
 #include <string.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <stdint.h>
+#include <inttypes.h>
+#include <ctype.h>
 
 #include "hfdisk.h"
 #include "io.h"
@@ -54,7 +57,10 @@
 //
 // Global Constants
 //
-const long kDefault = -1;
+const uint64_t kDefault = UINT64_MAX;
+
+_Static_assert(sizeof(off_t) >= 8,
+    "hfdisk requires a 64-bit off_t; build with large-file support");
 
 
 //
@@ -94,6 +100,7 @@ get_command(char *prompt, int promptBeforeGet, int *command)
 {
     int result = 0;
     char* string = NULL;
+    (void)promptBeforeGet;
     if (get_string_argument(prompt, &string, 1))
     {
 	*command = string[0];
@@ -106,43 +113,56 @@ get_command(char *prompt, int promptBeforeGet, int *command)
 
 	
 int
-get_number_argument(char *prompt, long *number, long default_value)
+get_number_argument(const char *prompt, uint64_t *number, uint64_t default_value)
 {
-    int result = 0;
-
     char* buf = NULL;
     size_t buflen = 0;
-    char multiplier;
-    int matched;
+    int result = 0;
 
-    while (result == 0) {
+	while (result == 0) {
 	printf("%s", prompt);
 
-	if (getline(&buf, &buflen, stdin) == -1)
-	{
+	if (getline(&buf, &buflen, stdin) == -1) {
 	    // EOF
 	    break;
-	}
-	else if ((default_value > 0) && (strncmp(buf, "\n", 1) == 0))
-	{
+	} else if (default_value != kDefault && strcmp(buf, "\n") == 0) {
 	    *number = default_value;
 	    result = 1;
-	    break;
-	}
-	else if ((matched = sscanf(buf, "%ld%c", number, &multiplier)) >= 1)
-	{
-	    result = 1;
-	    if (matched == 2) {
-		if (multiplier == 'g' || multiplier == 'G') {
-		    *number *= (1024*1024*1024 / PBLOCK_SIZE);
-		} else if (multiplier == 'm' || multiplier == 'M') {
-		    *number *= (1024*1024 / PBLOCK_SIZE);
-		} else if (multiplier == 'k' || multiplier == 'K') {
-		    *number *= (1024 / PBLOCK_SIZE);
-		} else if (multiplier != '\n') {
-		    result = 0;
-		}
+	} else {
+	    char *end;
+	    char *p = buf;
+	    uintmax_t value;
+	    uint64_t multiplier = 1;
+
+	    while (isspace((unsigned char)*p)) {
+		p++;
 	    }
+	    if (*p == '-') {
+		continue;
+	    }
+	    errno = 0;
+	    value = strtoumax(p, &end, 10);
+	    if (p == end || errno == ERANGE || value > UINT64_MAX) {
+		continue;
+	    }
+	    if (*end == 'g' || *end == 'G') {
+		multiplier = UINT64_C(1024) * 1024 * 1024 / PBLOCK_SIZE;
+		end++;
+	    } else if (*end == 'm' || *end == 'M') {
+		multiplier = UINT64_C(1024) * 1024 / PBLOCK_SIZE;
+		end++;
+	    } else if (*end == 'k' || *end == 'K') {
+		multiplier = UINT64_C(1024) / PBLOCK_SIZE;
+		end++;
+	    }
+	    while (isspace((unsigned char)*end)) {
+		end++;
+	    }
+	    if (*end != '\0' || value > UINT64_MAX / multiplier) {
+		continue;
+	    }
+	    *number = (uint64_t)value * multiplier;
+	    result = 1;
 	}
     }
     free(buf);
@@ -182,7 +202,7 @@ get_string_argument(char *prompt, char **string, int reprompt)
 }
 
 int
-number_of_digits(unsigned long value)
+number_of_digits(uint64_t value)
 {
     int j;
 
@@ -210,14 +230,30 @@ bad_input(char *fmt, ...)
 }
 
 
+static int
+block_offset(uint64_t num, off_t *offset)
+{
+    if (num > (uint64_t)INT64_MAX / PBLOCK_SIZE) {
+	errno = EOVERFLOW;
+	return 0;
+    }
+    *offset = (off_t)(num * PBLOCK_SIZE);
+    return 1;
+}
+
 int
-read_block(int fd, unsigned long num, char *buf, int quiet)
+read_block(int fd, uint64_t num, char *buf, int quiet)
 {
     off_t x;
-    long t;
+    ssize_t t;
 
-    {
-	x = ((long long) num * PBLOCK_SIZE); /* cast to ll to work around compiler bug */
+	if (!block_offset(num, &x)) {
+	    if (!quiet) {
+		error(errno, "Block offset is too large");
+	    }
+	    return 0;
+	}
+	{
 	if ((x = lseek(fd, x, 0)) < 0) {
 	    if (quiet == 0) {
 		error(errno, "Can't seek on file");
@@ -236,17 +272,20 @@ read_block(int fd, unsigned long num, char *buf, int quiet)
 
 
 int
-write_block(int fd, unsigned long num, char *buf)
+write_block(int fd, uint64_t num, char *buf)
 {
     off_t x;
-    long t;
+    ssize_t t;
 
     if (rflag) {
-	printf("Can't write block %lu to file", num);
+	printf("Can't write block %" PRIu64 " to file", num);
 	return 0;
     }
+	if (!block_offset(num, &x)) {
+	error(errno, "Block offset is too large");
+	return 0;
+	}
     {
-	x = num * PBLOCK_SIZE;
 	if ((x = lseek(fd, x, 0)) < 0) {
 	    error(errno, "Can't seek on file");
 	    return 0;

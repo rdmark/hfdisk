@@ -40,6 +40,7 @@
 #include "io.h"
 #include "errors.h"
 #include "partition_map.h"
+#include "convert.h"
 #include "dump.h"
 
 
@@ -98,7 +99,7 @@ void
 dump_block_zero(partition_map_header *map)
 {
     Block0 *p;
-    DDMap *m;
+    DDMap driver;
     int i;
 
     p = map->misc;
@@ -111,10 +112,12 @@ dump_block_zero(partition_map_header *map)
 	    p->sbDevType, p->sbDevId);
     if (p->sbDrvrCount > 0) {
 	printf("Drivers-\n");
-	m = (DDMap *) p->sbMap;
 	for (i = 0; i < p->sbDrvrCount; i++) {
-	    printf("%u: @ %u for %u, type=0x%x\n", i+1, m[i].ddBlock,
-		    m[i].ddSize, m[i].ddType);
+	    if (block0_get_driver(p, i, &driver) != 0) {
+		break;
+	    }
+	    printf("%u: @ %u for %u, type=0x%x\n", i+1, driver.ddBlock,
+		    driver.ddSize, driver.ddType);
 	}
     }
     printf("\n");
@@ -323,12 +326,13 @@ void
 show_data_structures(partition_map_header *map)
 {
     Block0 *zp;
-    DDMap *m;
+    DDMap driver;
     int i;
     int j;
     partition_map * entry;
     DPME *p;
     BZB *bp;
+    BZB bzb;
     char *s;
 
     if (map == NULL) {
@@ -364,10 +368,12 @@ show_data_structures(partition_map_header *map)
 	} else {
 	    printf("%u driver%s-\n", zp->sbDrvrCount,
 		    (zp->sbDrvrCount>1)?"s":kStringEmpty);
-	    m = (DDMap *) zp->sbMap;
 	    for (i = 0; i < zp->sbDrvrCount; i++) {
-		printf("%u: @ %u for %u, type=0x%x\n", i+1, m[i].ddBlock,
-			m[i].ddSize, m[i].ddType);
+		if (block0_get_driver(zp, i, &driver) != 0) {
+		    break;
+		}
+		printf("%u: @ %u for %u, type=0x%x\n", i+1, driver.ddBlock,
+			driver.ddSize, driver.ddType);
 	    }
 	}
     }
@@ -424,9 +430,13 @@ xx: cccc RU *dd s...
 	p = entry->data;
 	printf("%2ld: ", entry->disk_address);
 
-	bp = (BZB *) (p->dpme_bzb);
+	if (dpme_get_bzb(p, &bzb) != 0) {
+	    bp = &bzb;
+	} else {
+	    bp = NULL;
+	}
 	j = -1;
-	if (bp->bzb_magic == BZBMAGIC) {
+	if (bp != NULL) {
 	    switch (bp->bzb_type) {
 	    case FSTEFS:
 		s = "esch";
@@ -463,5 +473,3 @@ xx: cccc RU *dd s...
 	printf("\n");
     }
 }
-
-

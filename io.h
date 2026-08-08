@@ -31,6 +31,8 @@
 //
 #define	PBLOCK_SIZE	512
 
+#include <stdint.h>
+
 
 //
 // Types
@@ -40,7 +42,7 @@
 //
 // Global Constants
 //
-extern const long kDefault;
+extern const uint64_t kDefault;
 
 
 //
@@ -54,10 +56,10 @@ extern const long kDefault;
 void bad_input(char *fmt, ...);
 int close_device(int fildes);
 int get_command(char *prompt, int promptBeforeGet, int *command);
-int get_number_argument(char *prompt, long *number, long default_value);
+int get_number_argument(const char *prompt, uint64_t *number, uint64_t default_value);
 int get_okay(char *prompt);
 int get_string_argument(char *prompt, char **string, int reprompt);
-int number_of_digits(unsigned long value);
+int number_of_digits(uint64_t value);
 int open_device(const char *path, int oflag);
-int read_block(int fd, unsigned long num, char *buf, int quiet);
-int write_block(int fd, unsigned long num, char *buf);
+int read_block(int fd, uint64_t num, char *buf, int quiet);
+int write_block(int fd, uint64_t num, char *buf);

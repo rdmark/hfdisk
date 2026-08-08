@@ -50,16 +50,25 @@
 
 #define	DPISTRLEN	32
 #define	DPME_SIGNATURE	0x504D
+#define DPME_WIRE_SIZE 512
+#define BLOCK0_WIRE_SIZE 512
+#define BLOCK0_DRIVER_MAP_OFFSET 18
+#define BLOCK0_DRIVER_MAP_SIZE (BLOCK0_WIRE_SIZE - BLOCK0_DRIVER_MAP_OFFSET)
+#define BLOCK0_MAX_DRIVERS (BLOCK0_DRIVER_MAP_SIZE / 8)
 
 // A/UX only stuff (tradition!)
-#define	dpme_bzb	dpme_boot_args
 #define	BZBMAGIC 0xABADBABE	/* BZB magic number */
 #define	FST	((uint8_t) 0x1)	/* standard UNIX FS */
 #define	FSTEFS	((uint8_t) 0x2)	/* Autorecovery FS */
 #define	FSTSFS	((uint8_t) 0x3)	/* Swap FS */
 
 
-// Physical block zero of the disk has this format
+/*
+ * These are host-side representations.  They intentionally are not packed:
+ * the disk format is encoded and decoded explicitly in convert.c.  In
+ * particular, the driver map starts at byte 18 on disk and must not be cast
+ * to a DDMap pointer.
+ */
 struct Block0 {
     uint16_t 	sbSig;		/* unique value for SCSI block 0 */
     uint16_t 	sbBlkSize;	/* block size of device */
@@ -68,12 +77,10 @@ struct Block0 {
     uint16_t 	sbDevId;	/* device id */
     uint32_t 	sbData;		/* not used */
     uint16_t 	sbDrvrCount;	/* driver descriptor count */
-    uint16_t 	sbMap[247];	/* descriptor map */
+    uint8_t  	sbMap[BLOCK0_DRIVER_MAP_SIZE]; /* big-endian descriptor map */
 };
 typedef struct Block0 Block0;
 
-// Where &sbMap[0] is actually an array DDMap[sbDrvrCount]
-// kludge to get around alignment junk
 struct DDMap {
     uint32_t 	ddBlock;	/* 1st driver's starting block */
     uint16_t 	ddSize;		/* size of 1st driver (512-byte blks) */
@@ -114,7 +121,7 @@ struct dpme {
     uint32_t     dpme_goto_addr_2        ;
     uint32_t     dpme_checksum           ;
     char    dpme_process_id[16]     ;
-    uint32_t     dpme_boot_args[32]      ;
+    uint8_t      dpme_boot_args[128]     ; /* opaque on-disk bytes */
     uint32_t     dpme_reserved_3[62]     ;
 };
 typedef struct dpme DPME;
@@ -154,8 +161,7 @@ struct abm		/* altblk map info stored in bzb */
 typedef	struct abm ABM;
 
 // BZB (Block Zero Block, but I can't remember the etymology)
-// Where &dpme_boot_args[0] is actually the address of a struct bzb
-// kludge to get around alignment junk
+// Decoded from dpme_boot_args by dpme_get_bzb(); it is never overlaid on it.
 struct bzb			/* block zero block format */
 {
     uint32_t  bzb_magic;		/* magic number */

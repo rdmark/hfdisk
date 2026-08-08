@@ -1,3 +1,5 @@
 hfdisk
+tests/test_large_file
+tests/test_wire
 *.o
 *.swp

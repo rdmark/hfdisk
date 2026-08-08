@@ -43,6 +43,9 @@ While the original intent was to handle various block sizes, in practice
 only 512 byte blocks are supported.  Since the various address fields are
 32 bits unsigned this means the format can handle disks up to 2 Terabytes
 in size.  (32bits + 9 bits = 41 bits)
+The program uses 64-bit file offsets even on 32-bit hosts, but it rejects
+devices larger than the address space representable by the Apple Partition
+Map format.
 Because the format was designed around SCSI, there is no knowledge of
 cylinders or heads, all block address are in absolute sector form.
 A correct map should describe every block on the disk except for block zero.
