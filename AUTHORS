@@ -1,0 +1,32 @@
+Contributors
+============
+
+Eryk Vershen <eryk@apple.com>
+    original author of pdisk
+Michael Schmitz <schmitz@lcbvax.cchem.berkeley.edu>
+    created mac-fdisk fork
+Christiaan Welvaart <cjw@daneel.dyndns.org>
+    Linux/m68k version
+Michael McMaster <michael@codesrc.com>
+    created hfdisk fork
+Daniel Markstedt <daniel@mindani.net>
+    portability and large-file safety on 32 bit hosts
+
+Debian Contributors
+-------------------
+
+A big thanks to everyone who contributed to deb packaging, patches,
+and bug reports
+
+Roman Hodek
+Ethan Benson
+Colin Walters <walters@verbum.org>
+Derrick Pates <dpates@dsdk12.net>
+Gaudenz Steinlin <gaudenz@soziologie.ch>
+Frank Lichtenheld <djpig@debian.org>
+Colin Watson <cjwatson@debian.org>
+Andreas Jochens <aj@andaco.de>
+Rick Thomas
+Frans Pop <elendil@planet.nl>
+John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
+Bastian Germann <bage@debian.org>
