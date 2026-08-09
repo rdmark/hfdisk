@@ -49,8 +49,17 @@
 //
 // Forward declarations
 //
+#if defined(__GNUC__) || defined(__clang__)
+#define HFDISK_PRINTF_FORMAT(format_index, first_argument) \
+    __attribute__((format(printf, format_index, first_argument)))
+#else
+#define HFDISK_PRINTF_FORMAT(format_index, first_argument)
+#endif
+
 void do_help();
 void init_program_name(char **argv);
-void error(int value, char *fmt, ...);
-void fatal(int value, char *fmt, ...);
+void error(int value, const char *fmt, ...)
+    HFDISK_PRINTF_FORMAT(2, 3);
+void fatal(int value, const char *fmt, ...)
+    HFDISK_PRINTF_FORMAT(2, 3);
 void usage(char *kind);

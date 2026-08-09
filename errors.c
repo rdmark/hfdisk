@@ -99,7 +99,7 @@ usage(char *kind)
 // the perror(3) message.
 //
 void
-fatal(int value, char *fmt, ...)
+fatal(int value, const char *fmt, ...)
 {
     va_list ap;
 
@@ -120,7 +120,7 @@ fatal(int value, char *fmt, ...)
 // the perror(3) message.
 //
 void
-error(int value, char *fmt, ...)
+error(int value, const char *fmt, ...)
 {
     va_list ap;
 

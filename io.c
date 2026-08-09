@@ -262,7 +262,7 @@ read_block(int fd, uint64_t num, char *buf, int quiet)
 	}
 	if ((t = read(fd, buf, PBLOCK_SIZE)) != PBLOCK_SIZE) {
 	    if (quiet == 0) {
-		error((t<0?errno:0), "Can't read block %u from file", num);
+		error((t<0?errno:0), "Can't read block %" PRIu64 " from file", num);
 	    }
 	    return 0;
 	}
@@ -291,7 +291,7 @@ write_block(int fd, uint64_t num, char *buf)
 	    return 0;
 	}
 	if ((t = write(fd, buf, PBLOCK_SIZE)) != PBLOCK_SIZE) {
-	    error((t<0?errno:0), "Can't write block %u to file", num);
+	    error((t<0?errno:0), "Can't write block %" PRIu64 " to file", num);
 	    return 0;
 	}
 	return 1;
