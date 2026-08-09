@@ -1,35 +1,20 @@
-README for pdisk	(9 January 1997)
-================
+README for hfdisk
+=================
 
-This file accompanies version 0.4 of pdisk.
-
-pdisk is a partition table editor for (Mk)Linux which understands the
+hfdisk is a partition table editor for Linux which understands the
 Apple disk partitioning format.
 
-Version 0.4 is the second version of pdisk in general distribution.
-(Version 0.3 was the first general distribution.) The author of pdisk
-is Eryk Vershen (eryk@apple.com).  Any questions, comments, suggestions,
-etc. can be sent via email.  I can't guarantee a response, but I'll try.
+hfdisk is a fork of mac-fdisk, which in turn is a fork of pdisk.
+Compared to pdisk, these forks have numerous bug fixes, quality of life
+improvements, and portability enhancements.  See AUTHORS for a list of
+contributors.
 
-Please read the man page.  (man ./pdisk.8)
+Please read the man page.  (man ./hfdisk.8)
 
 The best curently available documentation on the Apple disk partitioning scheme
 is "Inside Macintosh: Devices" pages 3-12 to 3-15 combined with the info
 in "Inside Macintosh - Volume V" pages V-576 to V-582.  This, unfortunately,
 does not cover everything.
-
-I have also enclosed modified sources for fdisk, which do not have the
-byte order problem.  These are derived from the sparc patches (but contain
-none of the sun disk label stuff) in the the latest package I found
-util-linux-2.5-26.src.rpm, which I got from the RedHat 4.0
-distribution.
-
-
-Building the macintosh application
-----------------------------------
-I have only built this under Code Warrior 10.  The project file is
-included.  The project stationery was 'MacOS:C/C++:ANSI Console PPC'.
-Thanks to Martin Minow for the SCSI support code.
 
 
 Some notes on the apple partitioning
@@ -76,14 +61,14 @@ The intel map can contain NO MORE THAN FOUR PRIMARY PARTITIONS.
 You can't have any extended or logical partitions.  (Well, you might get it
 to work but I wouldn't want to try it.)  The disk will NOT BE INTEL BOOTABLE.
 
-1) Use pdisk to initialize an apple partition map.  Don't add any partitions
+1) Use hfdisk to initialize an apple partition map.  Don't add any partitions
    yet, just write the map out and quit.
 
 2) Use fdisk to create the primary partitions.  Go into the expert 'x' menu
    in fdisk and print out the table with the sector addresses.  Write the
    start and lengths down some where.  Write the table out.
 
-3) Use pdisk again.  Shrink the partition map down, if necessary, so it
+3) Use hfdisk again.  Shrink the partition map down, if necessary, so it
    does not overlap any intel partition.  Create an apple partition for each
    intel partition using the start and length value you got from fdisk.
    Write out the map and quit.
