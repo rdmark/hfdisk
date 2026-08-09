@@ -283,6 +283,9 @@ write_partition_map(partition_map_header *map)
 		write_block(fd, i, (char *)block);
 	}
     }
+    if (fsync(fd) < 0) {
+	error(errno, "can't sync partition map");
+    }
     printf("The partition map has been saved successfully!\n\n");
 
     if (map->regular_file) {
@@ -293,7 +296,6 @@ write_partition_map(partition_map_header *map)
 	 printf("Calling ioctl() to re-read partition table.\n");
 	if ((i = ioctl(fd, BLKFLSBUF)) != 0) {
 	    perror("ioctl(BLKFLSBUF)");
-	    sync();
 	}
 	sleep(2);
 	if ((i = ioctl(fd, BLKRRPART)) != 0) {
@@ -305,7 +307,6 @@ write_partition_map(partition_map_header *map)
 	    // printf("Again calling ioctl() to re-read partition table.\n");
 	    if ((i = ioctl(fd, BLKFLSBUF)) != 0) {
 	    	perror("ioctl(BLKFLSBUF)");
-		sync();
 	    }
 	    sleep(2);
 	    if ((i = ioctl(fd, BLKRRPART)) != 0) {
@@ -315,10 +316,8 @@ write_partition_map(partition_map_header *map)
 	printf("Syncing disks.\n");
 	if ((i = ioctl(fd, BLKFLSBUF)) != 0) {
 	    perror("ioctl(BLKFLSBUF)");
-	    sync();
 	}
 	close_device(map->fd);
-	sleep(4);		/* for sync() */
 
 	if (i < 0) {
 	    error(saved_errno, "Re-read of partition map failed");
