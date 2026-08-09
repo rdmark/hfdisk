@@ -15,7 +15,7 @@ char *program_name = "test_large_file";
 int
 main(void)
 {
-    char path[] = "/private/tmp/hfdisk-large-file.XXXXXX";
+    char path[] = "/tmp/hfdisk-large-file.XXXXXX";
     char write_buf[PBLOCK_SIZE];
     char read_buf[PBLOCK_SIZE];
     uint64_t block = UINT64_C(4194304); /* byte offset: exactly 2 GiB */
