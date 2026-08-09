@@ -15,5 +15,17 @@
 
 970115	Released version 0.4 (with Macintosh app)
 
-2013-09-11
+2013-09-11  Released version 1.0
 		Forked mac-fdisk into hfdisk
+        Incorporated Debian patches from mac-fdisk 0.1-16
+        Refactor and remove old code: it compiles with some warnings
+
+2022-10-28  Released version 2022.10
+        Add "packed" attribute to structures loaded from disk
+        Simplied user input, and provided more meaningful defaults
+        Allow adding and removal of driver partitions
+        Fix crash when creating partitions
+
+2022-11-01  Released version 2022.11
+        Remove packed attribute from disk partition structs
+        Null terminate string passed to stncpy
