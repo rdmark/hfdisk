@@ -10,10 +10,9 @@
 
 int rflag;
 int hflag;
-char *program_name = "test_large_file";
 
 int
-main(void)
+main(int argc, char **argv)
 {
     char path[] = "/tmp/hfdisk-large-file.XXXXXX";
     char write_buf[PBLOCK_SIZE];
@@ -21,6 +20,8 @@ main(void)
     uint64_t block = UINT64_C(4194304); /* byte offset: exactly 2 GiB */
     int fd = mkstemp(path);
 
+    (void)argc;
+    init_program_name(argv);
     assert(fd >= 0);
     memset(write_buf, 0xa5, sizeof(write_buf));
     assert(write_block(fd, block, write_buf) == 1);
