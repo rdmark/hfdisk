@@ -291,7 +291,7 @@ write_partition_map(partition_map_header *map)
     if (map->regular_file) {
 	close_device(map->fd);
     } else {
-#ifdef BLKFLSBUF
+#if defined(__linux__) && defined(BLKFLSBUF) && defined(BLKRRPART)
 	int saved_errno;
 	 printf("Calling ioctl() to re-read partition table.\n");
 	if ((i = ioctl(fd, BLKFLSBUF)) != 0) {
