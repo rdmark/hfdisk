@@ -1,4 +1,5 @@
-CFLAGS ?= -std=c11 -Wall -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L
+CPPFLAGS += -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L
+CFLAGS ?= -std=c11 -Wall
 all: hfdisk
 
 test: tests/test_wire tests/test_large_file
@@ -8,10 +9,10 @@ test: tests/test_wire tests/test_large_file
 hfdisk: hfdisk.o dump.o partition_map.o convert.o io.o errors.o bitfield.o
 
 tests/test_wire: tests/test_wire.c convert.o bitfield.o
-	$(CC) $(CFLAGS) -I. $^ -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -I. $^ -o $@
 
 tests/test_large_file: tests/test_large_file.c io.o errors.o
-	$(CC) $(CFLAGS) -I. $^ -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -I. $^ -o $@
 
 clean:
 	rm -f *.o hfdisk tests/test_wire tests/test_large_file
