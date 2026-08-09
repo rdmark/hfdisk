@@ -35,6 +35,9 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
+#ifdef __linux__
+#include <dirent.h>
+#endif
 
 #include "hfdisk.h"
 #include "io.h"
@@ -273,52 +276,75 @@ dump_partition_entry(partition_map *entry, int digits, char *dev)
 }
 
 
+static void
+try_dump_disk(char *name)
+{
+    int fd;
+    uint8_t block[PBLOCK_SIZE];
+
+    if ((fd = open_device(name, O_RDONLY)) < 0) {
+	if (errno == EACCES) {
+	    error(errno, "can't open file '%s'", name);
+	}
+	return;
+    }
+    if (read_block(fd, 1, (char *)block, 1) == 0) {
+	close_device(fd);
+	return;
+    }
+    close_device(fd);
+    dump(name);
+}
+
+
 void
 list_all_disks()
 {
-    char name[20];
-    int i;
-    int fd;
-    DPME * data;
+#ifdef __linux__
+    DIR *directory;
+    struct dirent *entry;
 
-    data = (DPME *) malloc(PBLOCK_SIZE);
-    if (data == NULL) {
-	error(errno, "can't allocate memory for try buffer");
+    directory = opendir("/sys/class/block");
+    if (directory == NULL) {
+	error(errno, "can't open /sys/class/block");
 	return;
     }
+    while ((entry = readdir(directory)) != NULL) {
+	char path[256];
+	char name[256];
+	int length;
+
+	if (entry->d_name[0] == '.') {
+	    continue;
+	}
+	length = snprintf(path, sizeof(path),
+		"/sys/class/block/%s/partition", entry->d_name);
+	if (length < 0 || (size_t)length >= sizeof(path)) {
+	    continue;
+	}
+	if (access(path, F_OK) == 0) {
+	    continue;
+	}
+	length = snprintf(name, sizeof(name), "/dev/%s", entry->d_name);
+	if (length < 0 || (size_t)length >= sizeof(name)) {
+	    continue;
+	}
+	try_dump_disk(name);
+    }
+    closedir(directory);
+#else
+    char name[20];
+    int i;
+
     for (i = 0; i < 7; i++) {
 	sprintf(name, "/dev/sd%c", 'a'+i);
-	if ((fd = open_device(name, O_RDONLY)) < 0) {
-	    if (errno == EACCES) {
-		error(errno, "can't open file '%s'", name);
-	    }
-	    continue;
-	}
-	if (read_block(fd, 1, (char *)data, 1) == 0) {
-	    close_device(fd);
-	    continue;
-	}
-	close_device(fd);
-
-	dump(name);
+	try_dump_disk(name);
     }
     for (i = 0; i < 4; i++) {
 	sprintf(name, "/dev/hd%c", 'a'+i);
-	if ((fd = open_device(name, O_RDONLY)) < 0) {
-	    if (errno == EACCES) {
-		error(errno, "can't open file '%s'", name);
-	    }
-	    continue;
-	}
-	if (read_block(fd, 1, (char *)data, 1) == 0) {
-	    close_device(fd);
-	    continue;
-	}
-	close_device(fd);
-
-	dump(name);
+	try_dump_disk(name);
     }
-    free(data);
+#endif
 }
 
 
